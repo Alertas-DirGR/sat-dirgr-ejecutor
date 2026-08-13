@@ -1,0 +1,79 @@
+name: SAT DirGR - Indice FWI Diario - Ejecutor Publico
+
+on:
+  schedule:
+    # Respaldos automáticos en hora de Córdoba
+    - cron: "17 14 * * *"
+      timezone: "America/Argentina/Cordoba"
+
+    - cron: "27 14 * * *"
+      timezone: "America/Argentina/Cordoba"
+
+    - cron: "37 14 * * *"
+      timezone: "America/Argentina/Cordoba"
+
+    - cron: "17 17 * * *"
+      timezone: "America/Argentina/Cordoba"
+
+  workflow_dispatch:
+    inputs:
+      attempt:
+        description: "Tipo de ejecución"
+        required: true
+        default: "manual"
+        type: choice
+        options:
+          - "manual"
+          - "14"
+          - "17"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sat-dirgr-fwi-diario
+  cancel-in-progress: false
+
+jobs:
+  process-fwi:
+    name: Procesar Indice FWI Diario
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Descargar codigo privado de FWI
+        uses: actions/checkout@v5
+        with:
+          repository: Alertas-DirGR/sat-dirgr-fwi
+          token: ${{ secrets.FWI_REPO_TOKEN }}
+          path: fwi
+
+      - name: Preparar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: fwi/package-lock.json
+
+      - name: Instalar dependencias
+        working-directory: fwi
+        run: npm ci
+
+      - name: Determinar intento
+        id: attempt
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "value=${{ inputs.attempt }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "17 17 * * *" ]; then
+            echo "value=17" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=14" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Procesar Indice FWI Diario
+        working-directory: fwi
+        env:
+          APPS_SCRIPT_URL: ${{ secrets.APPS_SCRIPT_URL }}
+          APPS_SCRIPT_SECRET: ${{ secrets.APPS_SCRIPT_SECRET }}
+        run: node src/run.js --attempt "${{ steps.attempt.outputs.value }}" --output resultado.json
