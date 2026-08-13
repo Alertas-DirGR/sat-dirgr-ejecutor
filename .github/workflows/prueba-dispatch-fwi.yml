@@ -1,0 +1,24 @@
+name: SAT DirGR FWI - Prueba Dispatch
+
+on:
+  workflow_dispatch:
+    inputs:
+      attempt:
+        description: "Intento de prueba"
+        required: false
+        default: "manual"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  prueba:
+    name: Confirmar disparo FWI
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Confirmar disparo
+        run: |
+          echo "SAT DirGR - FWI - PRUEBA DISPATCH OK"
+          echo "attempt=${{ inputs.attempt }}"
