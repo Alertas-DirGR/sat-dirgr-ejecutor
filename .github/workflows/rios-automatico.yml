@@ -1,0 +1,100 @@
+name: SAT DirGR Rios - Ejecutor Publico
+
+run-name: "SAT DirGR Rios - Ejecutor | ${{ inputs.request_id }} | ${{ inputs.sensor_ids }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      sensor_ids:
+        description: "SENSOR_ID vencidos, separados por coma"
+        required: true
+        type: string
+      requested_at:
+        description: "Fecha y hora solicitada por Apps Script"
+        required: false
+        default: ""
+        type: string
+      request_id:
+        description: "Identificador unico de la solicitud de Apps Script"
+        required: false
+        default: "manual"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sat-dirgr-rios-automatico
+  cancel-in-progress: false
+
+jobs:
+  automatico:
+    name: Procesar sensores cuyo intervalo ya vencio
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    env:
+      SAT_RIOS_SENSOR_IDS: ${{ inputs.sensor_ids }}
+      SAT_RIOS_REQUESTED_AT: ${{ inputs.requested_at }}
+      SAT_RIOS_REQUEST_ID: ${{ inputs.request_id }}
+
+    steps:
+      - name: Descargar codigo privado de Rios
+        uses: actions/checkout@v5
+        with:
+          repository: Alertas-DirGR/sat-dirgr-rios
+          token: ${{ secrets.RIOS_REPO_TOKEN }}
+          path: rios
+
+      - name: Configurar Node.js 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+
+      - name: Instalar dependencias
+        working-directory: rios
+        run: npm install
+
+      - name: Instalar navegador Chromium
+        working-directory: rios
+        run: npx playwright install --with-deps chromium
+
+      - name: Probar controles de ejecucion automatica
+        working-directory: rios
+        run: npm run probar-ejecucion-automatica
+
+      - name: Descargar datos reales de INA-CIRSA
+        working-directory: rios
+        env:
+          INA_USERNAME: ${{ secrets.DGRIESGO }}
+          INA_PASSWORD: ${{ secrets.SGA_DGR }}
+        run: npm run diagnostico
+
+      - name: Generar vista previa integral sin escribir
+        working-directory: rios
+        env:
+          SAT_RIOS_WEB_URL: ${{ secrets.SAT_RIOS_WEB_URL }}
+          SAT_RIOS_WEB_TOKEN: ${{ secrets.SAT_RIOS_WEB_TOKEN }}
+          SAT_RIOS_NOW: ${{ inputs.requested_at }}
+        run: npm run integrar-prueba
+
+      - name: Filtrar solamente los sensores programados
+        working-directory: rios
+        run: npm run preparar-ejecucion-automatica
+
+      - name: Actualizar sensores y ejecutar comunicaciones operativas
+        working-directory: rios
+        env:
+          SAT_RIOS_WEB_URL: ${{ secrets.SAT_RIOS_WEB_URL }}
+          SAT_RIOS_WEB_TOKEN: ${{ secrets.SAT_RIOS_WEB_TOKEN }}
+          SAT_RIOS_EJECUCION_ID: automatico-v1.16.0-${{ github.run_id }}-${{ github.run_attempt }}
+        run: npm run aplicar-ejecucion-automatica
+
+      - name: Guardar resultados de la ejecucion
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rios-automatico-${{ github.run_number }}
+          path: rios/artifacts/
+          if-no-files-found: warn
+          retention-days: 7
