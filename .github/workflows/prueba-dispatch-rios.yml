@@ -1,0 +1,34 @@
+name: SAT DirGR Rios - Prueba Dispatch
+
+on:
+  workflow_dispatch:
+    inputs:
+      sensor_ids:
+        description: "Dato de prueba"
+        required: false
+        default: "PRUEBA"
+        type: string
+      requested_at:
+        description: "Fecha/hora de prueba"
+        required: false
+        default: ""
+        type: string
+      request_id:
+        description: "ID de prueba"
+        required: false
+        default: "manual"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  prueba:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Confirmar disparo
+        run: |
+          echo "SAT DirGR - PRUEBA DISPATCH OK"
+          echo "request_id=${{ inputs.request_id }}"
+          echo "sensor_ids=${{ inputs.sensor_ids }}"
