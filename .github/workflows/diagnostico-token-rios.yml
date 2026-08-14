@@ -14,7 +14,7 @@ jobs:
       - name: Diagnosticar identidad y acceso del token Rios
         shell: bash
         env:
-          RIOS_TOKEN: ${{ secrets.RIOS_REPO_TOKEN }}
+          RIOS_TOKEN: ${{ secrets.RIOS_REPO_TOKEN_FINAL_TEST }}
         run: |
           echo "=== IDENTIDAD DEL TOKEN ==="
 
