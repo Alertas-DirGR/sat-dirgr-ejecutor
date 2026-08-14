@@ -1,0 +1,45 @@
+name: SAT DirGR Rios - Diagnostico Token
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostico:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Verificar acceso al repositorio privado de Rios
+        shell: bash
+        env:
+          RIOS_TOKEN: ${{ secrets.RIOS_REPO_TOKEN }}
+        run: |
+          HTTP_CODE=$(curl -sS \
+            -o respuesta.json \
+            -w "%{http_code}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${RIOS_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            https://api.github.com/repos/Alertas-DirGR/sat-dirgr-rios)
+
+          echo "HTTP=$HTTP_CODE"
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "ACCESO_RIOS=OK"
+            exit 0
+          fi
+
+          if [ "$HTTP_CODE" = "401" ]; then
+            echo "ACCESO_RIOS=TOKEN_INVALIDO"
+            exit 1
+          fi
+
+          if [ "$HTTP_CODE" = "404" ]; then
+            echo "ACCESO_RIOS=REPOSITORIO_NO_VISIBLE_PARA_EL_TOKEN"
+            exit 1
+          fi
+
+          echo "ACCESO_RIOS=ERROR_HTTP_$HTTP_CODE"
+          exit 1
