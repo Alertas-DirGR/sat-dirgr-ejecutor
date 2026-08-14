@@ -11,11 +11,49 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Verificar acceso al repositorio privado de Rios
+      - name: Diagnosticar identidad y acceso del token Rios
         shell: bash
         env:
           RIOS_TOKEN: ${{ secrets.RIOS_REPO_TOKEN }}
         run: |
+          echo "=== IDENTIDAD DEL TOKEN ==="
+
+          USER_HTTP=$(curl -sS \
+            -o usuario.json \
+            -w "%{http_code}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${RIOS_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            https://api.github.com/user)
+
+          echo "HTTP_USUARIO=$USER_HTTP"
+
+          if [ "$USER_HTTP" = "200" ]; then
+            LOGIN=$(node -e "const x=require('./usuario.json'); console.log(x.login)")
+            echo "LOGIN_AUTENTICADO=$LOGIN"
+          fi
+
+          echo "=== REPOSITORIOS VISIBLES ==="
+
+          curl -sS \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${RIOS_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "https://api.github.com/user/repos?per_page=100&visibility=all" \
+            -o repos.json
+
+          node -e "
+            const fs=require('fs');
+            const x=JSON.parse(fs.readFileSync('repos.json','utf8'));
+            if (Array.isArray(x)) {
+              x.forEach(r => console.log('REPO_VISIBLE=' + r.full_name));
+            } else {
+              console.log('RESPUESTA_REPOS=' + JSON.stringify(x));
+            }
+          "
+
+          echo "=== PRUEBA DIRECTA RIOS ==="
+
           HTTP_CODE=$(curl -sS \
             -o respuesta.json \
             -w "%{http_code}" \
@@ -24,22 +62,10 @@ jobs:
             -H "X-GitHub-Api-Version: 2026-03-10" \
             https://api.github.com/repos/Alertas-DirGR/sat-dirgr-rios)
 
-          echo "HTTP=$HTTP_CODE"
+          echo "HTTP_RIOS=$HTTP_CODE"
 
           if [ "$HTTP_CODE" = "200" ]; then
             echo "ACCESO_RIOS=OK"
-            exit 0
+          else
+            echo "ACCESO_RIOS=NO"
           fi
-
-          if [ "$HTTP_CODE" = "401" ]; then
-            echo "ACCESO_RIOS=TOKEN_INVALIDO"
-            exit 1
-          fi
-
-          if [ "$HTTP_CODE" = "404" ]; then
-            echo "ACCESO_RIOS=REPOSITORIO_NO_VISIBLE_PARA_EL_TOKEN"
-            exit 1
-          fi
-
-          echo "ACCESO_RIOS=ERROR_HTTP_$HTTP_CODE"
-          exit 1
