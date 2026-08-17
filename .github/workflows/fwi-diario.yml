@@ -2,14 +2,7 @@ name: SAT DirGR - Indice FWI Diario - Ejecutor Publico
 
 on:
   schedule:
-    # Respaldos automáticos en hora de Córdoba
     - cron: "17 14 * * *"
-      timezone: "America/Argentina/Cordoba"
-
-    - cron: "27 14 * * *"
-      timezone: "America/Argentina/Cordoba"
-
-    - cron: "37 14 * * *"
       timezone: "America/Argentina/Cordoba"
 
     - cron: "17 17 * * *"
