@@ -1,0 +1,31 @@
+name: SAT DirGR Rios - Prueba reglas
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probar-reglas:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Descargar repositorio privado Rios
+        uses: actions/checkout@v5
+        with:
+          repository: Alertas-DirGR/sat-dirgr-rios
+          token: ${{ secrets.RIOS_REPO_TOKEN_FINAL_TEST }}
+          ref: main
+
+      - name: Configurar Node.js 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+
+      - name: Instalar dependencias
+        run: npm install
+
+      - name: Probar reglas de intervencion
+        run: npm run probar-reglas
