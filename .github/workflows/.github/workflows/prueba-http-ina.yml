@@ -1,0 +1,361 @@
+name: SAT DirGR Rios - Prueba HTTP INA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prueba-http-ina:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Probar acceso HTTP directo INA CIRSA
+        env:
+          INA_USUARIO: ${{ secrets.DGRIESGO }}
+          INA_CLAVE: ${{ secrets.SGA_DGR }}
+
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          import html
+          import urllib.parse
+          import urllib.request
+          import http.cookiejar
+          import xml.etree.ElementTree as ET
+          from datetime import datetime, timedelta
+          from zoneinfo import ZoneInfo
+
+          BASE = "https://sga.ina.gob.ar/cirsa_versioned"
+          LOGIN = BASE + "/login.xhtml"
+          DATOS = BASE + "/precipitaciones.xhtml"
+
+          usuario = os.environ["INA_USUARIO"]
+          clave = os.environ["INA_CLAVE"]
+
+          cookies = http.cookiejar.CookieJar()
+
+          opener = urllib.request.build_opener(
+              urllib.request.HTTPCookieProcessor(cookies)
+          )
+
+          opener.addheaders = [
+              (
+                  "User-Agent",
+                  "Mozilla/5.0 SAT-DirGR-Prueba-HTTP"
+              )
+          ]
+
+
+          def obtener_viewstate(texto):
+              patrones = [
+                  r'name="javax\.faces\.ViewState"[^>]*value="([^"]+)"',
+                  r'value="([^"]+)"[^>]*name="javax\.faces\.ViewState"'
+              ]
+
+              for patron in patrones:
+                  m = re.search(
+                      patron,
+                      texto,
+                      re.I
+                  )
+
+                  if m:
+                      return html.unescape(m.group(1))
+
+              raise RuntimeError(
+                  "No se pudo obtener javax.faces.ViewState"
+              )
+
+
+          print("PASO 1 - ABRIR LOGIN")
+
+          with opener.open(
+              LOGIN,
+              timeout=30
+          ) as r:
+              login_html = r.read().decode(
+                  "utf-8",
+                  errors="replace"
+              )
+
+          view_login = obtener_viewstate(login_html)
+
+          print("LOGIN_GET=OK")
+          print("VIEWSTATE_LOGIN=OK")
+
+
+          print("PASO 2 - INICIAR SESION")
+
+          login_data = urllib.parse.urlencode({
+              "j_idt11": "j_idt11",
+              "j_idt11:userName": usuario,
+              "j_idt11:password": clave,
+              "j_idt11:btnLoginId": "Iniciar sesión",
+              "javax.faces.ViewState": view_login
+          }).encode("utf-8")
+
+          req_login = urllib.request.Request(
+              LOGIN,
+              data=login_data,
+              method="POST",
+              headers={
+                  "Content-Type":
+                      "application/x-www-form-urlencoded",
+                  "Referer": LOGIN
+              }
+          )
+
+          with opener.open(
+              req_login,
+              timeout=30
+          ) as r:
+              login_final_url = r.geturl()
+              login_resultado = r.read().decode(
+                  "utf-8",
+                  errors="replace"
+              )
+
+          if (
+              "login.xhtml" in login_final_url
+              and "Iniciar sesión" in login_resultado
+          ):
+              raise RuntimeError(
+                  "El login HTTP no fue aceptado."
+              )
+
+          print("LOGIN_POST=OK")
+          print("SESION_HTTP=OK")
+
+
+          print("PASO 3 - ABRIR MONITOREO")
+
+          with opener.open(
+              DATOS,
+              timeout=30
+          ) as r:
+              datos_html = r.read().decode(
+                  "utf-8",
+                  errors="replace"
+              )
+
+          view_datos = obtener_viewstate(datos_html)
+
+          print("PRECIPITACIONES_GET=OK")
+          print("VIEWSTATE_DATOS=OK")
+
+
+          print("PASO 4 - CONSULTAR SENSOR 1901")
+
+          ahora = datetime.now(
+              ZoneInfo("America/Argentina/Cordoba")
+          )
+
+          desde = ahora - timedelta(hours=24)
+
+          fecha_desde = desde.strftime(
+              "%d/%m/%Y %H:%M"
+          )
+
+          campos = {
+              "javax.faces.partial.ajax":
+                  "true",
+
+              "javax.faces.source":
+                  "formPrecipitaciones:"
+                  "tabViewPrecipitaciones:"
+                  "cmdSearch",
+
+              "javax.faces.partial.execute":
+                  "@all",
+
+              "javax.faces.partial.render":
+                  "formPrecipitaciones:messages "
+                  "formPrecipitaciones:"
+                  "tabViewPrecipitaciones:"
+                  "dtCargasPrecipitaciones",
+
+              "formPrecipitaciones:"
+              "tabViewPrecipitaciones:"
+              "cmdSearch":
+                  "formPrecipitaciones:"
+                  "tabViewPrecipitaciones:"
+                  "cmdSearch",
+
+              "formPrecipitaciones":
+                  "formPrecipitaciones",
+
+              "formPrecipitaciones:"
+              "tabViewPrecipitaciones:"
+              "fechaDesde_input":
+                  fecha_desde,
+
+              "formPrecipitaciones:"
+              "tabViewPrecipitaciones:"
+              "fechaHasta_input":
+                  "",
+
+              # Sensor oficial 1901.
+              # En JSF INA aparece con identificador interno 130.
+              "formPrecipitaciones:"
+              "tabViewPrecipitaciones:"
+              "selEstaciones_input":
+                  "130",
+
+              "formPrecipitaciones:"
+              "tabViewPrecipitaciones:"
+              "tipoValor_input":
+                  "",
+
+              "formPrecipitaciones:"
+              "tabViewPrecipitaciones:"
+              "enMantenimiento_input":
+                  "",
+
+              "formPrecipitaciones:"
+              "tabViewPrecipitaciones:"
+              "dtCargasPrecipitaciones_rppDD":
+                  "25",
+
+              "formPrecipitaciones:"
+              "tabViewPrecipitaciones_activeIndex":
+                  "0",
+
+              "javax.faces.ViewState":
+                  view_datos
+          }
+
+          post_data = urllib.parse.urlencode(
+              campos
+          ).encode("utf-8")
+
+          req_datos = urllib.request.Request(
+              DATOS,
+              data=post_data,
+              method="POST",
+              headers={
+                  "Content-Type":
+                      "application/x-www-form-urlencoded; charset=UTF-8",
+
+                  "Faces-Request":
+                      "partial/ajax",
+
+                  "X-Requested-With":
+                      "XMLHttpRequest",
+
+                  "Referer":
+                      DATOS
+              }
+          )
+
+          with opener.open(
+              req_datos,
+              timeout=30
+          ) as r:
+              respuesta = r.read().decode(
+                  "utf-8",
+                  errors="replace"
+              )
+
+          print("CONSULTA_HTTP=OK")
+          print(
+              "RESPUESTA_BYTES=" +
+              str(len(respuesta))
+          )
+
+
+          print("PASO 5 - EXTRAER FILAS 1901")
+
+          filas_encontradas = []
+
+          try:
+              root = ET.fromstring(respuesta)
+
+              bloques = []
+
+              for elem in root.iter():
+                  if elem.tag.endswith("update"):
+                      if elem.text:
+                          bloques.append(elem.text)
+
+              contenido = "\n".join(bloques)
+
+          except Exception:
+              contenido = respuesta
+
+
+          filas = re.findall(
+              r"<tr\b.*?</tr>",
+              contenido,
+              flags=re.I | re.S
+          )
+
+          for fila in filas:
+
+              limpio = re.sub(
+                  r"<[^>]+>",
+                  "|",
+                  fila
+              )
+
+              limpio = html.unescape(limpio)
+
+              limpio = re.sub(
+                  r"\|+",
+                  "|",
+                  limpio
+              )
+
+              limpio = re.sub(
+                  r"\s+",
+                  " ",
+                  limpio
+              ).strip(" |")
+
+              if "1901" in limpio:
+                  filas_encontradas.append(limpio)
+
+
+          print(
+              "FILAS_1901=" +
+              str(len(filas_encontradas))
+          )
+
+          for i, fila in enumerate(
+              filas_encontradas[:5],
+              start=1
+          ):
+              print(
+                  "FILA_" +
+                  str(i) +
+                  "=" +
+                  fila
+              )
+
+
+          if not filas_encontradas:
+              raise RuntimeError(
+                  "La consulta HTTP funciono, "
+                  "pero no se pudieron extraer filas del sensor 1901."
+              )
+
+
+          print(
+              "======================================"
+          )
+
+          print(
+              "RESULTADO FINAL=OK"
+          )
+
+          print(
+              "INA CIRSA CONSULTABLE POR HTTP DIRECTO"
+          )
+
+          print(
+              "SENSOR 1901=OK"
+          )
+          PY
