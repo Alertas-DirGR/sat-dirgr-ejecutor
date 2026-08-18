@@ -1,4 +1,4 @@
-name: SAT DirGR Rios - Prueba HTTP INA
+name: SAT DirGR Rios - Prueba HTTP INA Multisensor
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      - name: Probar acceso HTTP directo INA CIRSA
+      - name: Probar acceso HTTP directo INA CIRSA multisensor
         env:
           INA_USUARIO: ${{ secrets.DGRIESGO }}
           INA_CLAVE: ${{ secrets.SGA_DGR }}
@@ -22,16 +22,40 @@ jobs:
           import os
           import re
           import html
+          import time
           import urllib.parse
           import urllib.request
           import http.cookiejar
           import xml.etree.ElementTree as ET
+
+          from html.parser import HTMLParser
           from datetime import datetime, timedelta
           from zoneinfo import ZoneInfo
+
 
           BASE = "https://sga.ina.gob.ar/cirsa_versioned"
           LOGIN = BASE + "/login.xhtml"
           DATOS = BASE + "/precipitaciones.xhtml"
+
+          SENSORES = [
+              "703",
+              "1013",
+              "1301",
+              "1401",
+              "1503",
+              "1563",
+              "1801",
+              "1901",
+              "2103",
+              "2803",
+              "3003",
+              "3101",
+              "3801",
+              "3903",
+              "4003",
+              "4333",
+              "6003"
+          ]
 
           usuario = os.environ["INA_USUARIO"]
           clave = os.environ["INA_CLAVE"]
@@ -45,7 +69,7 @@ jobs:
           opener.addheaders = [
               (
                   "User-Agent",
-                  "Mozilla/5.0 SAT-DirGR-Prueba-HTTP"
+                  "Mozilla/5.0 SAT-DirGR-Prueba-HTTP-Multisensor"
               )
           ]
 
@@ -71,7 +95,162 @@ jobs:
               )
 
 
-          print("PASO 1 - ABRIR LOGIN")
+          class ParserEstaciones(HTMLParser):
+
+              def __init__(self):
+                  super().__init__()
+                  self.en_select = False
+                  self.valor = None
+                  self.texto = []
+                  self.mapa = {}
+
+              def handle_starttag(self, tag, attrs):
+                  attrs = dict(attrs)
+
+                  if (
+                      tag.lower() == "select"
+                      and
+                      attrs.get("id", "").endswith(
+                          "selEstaciones_input"
+                      )
+                  ):
+                      self.en_select = True
+                      return
+
+                  if (
+                      self.en_select
+                      and tag.lower() == "option"
+                  ):
+                      self.valor = attrs.get("value")
+                      self.texto = []
+
+              def handle_data(self, data):
+                  if (
+                      self.en_select
+                      and self.valor is not None
+                  ):
+                      self.texto.append(data)
+
+              def handle_endtag(self, tag):
+
+                  if (
+                      self.en_select
+                      and tag.lower() == "option"
+                      and self.valor is not None
+                  ):
+                      etiqueta = html.unescape(
+                          "".join(self.texto)
+                      ).strip()
+
+                      m = re.match(
+                          r"^\s*(\d+)\b",
+                          etiqueta
+                      )
+
+                      if m:
+                          self.mapa[m.group(1)] = {
+                              "interno": self.valor,
+                              "etiqueta": etiqueta
+                          }
+
+                      self.valor = None
+                      self.texto = []
+
+                  elif (
+                      self.en_select
+                      and tag.lower() == "select"
+                  ):
+                      self.en_select = False
+
+
+          def extraer_viewstate_ajax(respuesta, actual):
+
+              try:
+                  root = ET.fromstring(respuesta)
+
+                  for elem in root.iter():
+
+                      if (
+                          elem.tag.endswith("update")
+                          and
+                          "javax.faces.ViewState"
+                          in elem.attrib.get("id", "")
+                          and elem.text
+                      ):
+                          return html.unescape(elem.text)
+
+              except Exception:
+                  pass
+
+              return actual
+
+
+          def extraer_filas(respuesta, sensor_id):
+
+              try:
+                  root = ET.fromstring(respuesta)
+                  bloques = []
+
+                  for elem in root.iter():
+
+                      if (
+                          elem.tag.endswith("update")
+                          and elem.text
+                      ):
+                          bloques.append(elem.text)
+
+                  contenido = "\n".join(bloques)
+
+              except Exception:
+                  contenido = respuesta
+
+
+              filas_html = re.findall(
+                  r"<tr\b.*?</tr>",
+                  contenido,
+                  flags=re.I | re.S
+              )
+
+              resultado = []
+
+              for fila in filas_html:
+
+                  limpio = re.sub(
+                      r"<[^>]+>",
+                      "|",
+                      fila
+                  )
+
+                  limpio = html.unescape(limpio)
+
+                  limpio = re.sub(
+                      r"\|+",
+                      "|",
+                      limpio
+                  )
+
+                  limpio = re.sub(
+                      r"\s+",
+                      " ",
+                      limpio
+                  ).strip(" |")
+
+                  if (
+                      re.search(
+                          r"\|" + re.escape(sensor_id) + r"\|",
+                          "|" + limpio + "|"
+                      )
+                      and "NIVEL" in limpio.upper()
+                  ):
+                      resultado.append(limpio)
+
+              return resultado
+
+
+          inicio_total = time.perf_counter()
+
+
+          print("PASO 1 - LOGIN HTTP")
 
           with opener.open(
               LOGIN,
@@ -83,12 +262,6 @@ jobs:
               )
 
           view_login = obtener_viewstate(login_html)
-
-          print("LOGIN_GET=OK")
-          print("VIEWSTATE_LOGIN=OK")
-
-
-          print("PASO 2 - INICIAR SESION")
 
           login_data = urllib.parse.urlencode({
               "j_idt11": "j_idt11",
@@ -105,7 +278,8 @@ jobs:
               headers={
                   "Content-Type":
                       "application/x-www-form-urlencoded",
-                  "Referer": LOGIN
+                  "Referer":
+                      LOGIN
               }
           )
 
@@ -113,25 +287,26 @@ jobs:
               req_login,
               timeout=30
           ) as r:
-              login_final_url = r.geturl()
-              login_resultado = r.read().decode(
+              final_url = r.geturl()
+
+              resultado_login = r.read().decode(
                   "utf-8",
                   errors="replace"
               )
 
           if (
-              "login.xhtml" in login_final_url
-              and "Iniciar sesión" in login_resultado
+              "login.xhtml" in final_url
+              and
+              "Iniciar sesión" in resultado_login
           ):
               raise RuntimeError(
-                  "El login HTTP no fue aceptado."
+                  "LOGIN HTTP NO ACEPTADO"
               )
 
-          print("LOGIN_POST=OK")
-          print("SESION_HTTP=OK")
+          print("LOGIN_HTTP=OK")
 
 
-          print("PASO 3 - ABRIR MONITOREO")
+          print("PASO 2 - OBTENER ESTACIONES INA")
 
           with opener.open(
               DATOS,
@@ -142,16 +317,57 @@ jobs:
                   errors="replace"
               )
 
-          view_datos = obtener_viewstate(datos_html)
+          viewstate = obtener_viewstate(datos_html)
 
-          print("PRECIPITACIONES_GET=OK")
-          print("VIEWSTATE_DATOS=OK")
+          parser = ParserEstaciones()
+          parser.feed(datos_html)
+
+          mapa = parser.mapa
+
+          print(
+              "ESTACIONES_ENCONTRADAS=" +
+              str(len(mapa))
+          )
 
 
-          print("PASO 4 - CONSULTAR SENSOR 1901")
+          encontrados = []
+          faltantes = []
+
+          for sensor in SENSORES:
+
+              if sensor in mapa:
+                  encontrados.append(sensor)
+
+                  print(
+                      "MAPEO=" +
+                      sensor +
+                      " -> " +
+                      str(mapa[sensor]["interno"]) +
+                      " | " +
+                      mapa[sensor]["etiqueta"]
+                  )
+
+              else:
+                  faltantes.append(sensor)
+
+                  print(
+                      "MAPEO_FALTANTE=" +
+                      sensor
+                  )
+
+
+          if not encontrados:
+              raise RuntimeError(
+                  "No se pudo resolver ningun sensor."
+              )
+
+
+          print("PASO 3 - CONSULTA MULTISENSOR")
 
           ahora = datetime.now(
-              ZoneInfo("America/Argentina/Cordoba")
+              ZoneInfo(
+                  "America/Argentina/Cordoba"
+              )
           )
 
           desde = ahora - timedelta(hours=24)
@@ -160,187 +376,188 @@ jobs:
               "%d/%m/%Y %H:%M"
           )
 
-          campos = {
-              "javax.faces.partial.ajax":
-                  "true",
 
-              "javax.faces.source":
+          con_datos = []
+          sin_datos = []
+          errores = []
+
+
+          for sensor in encontrados:
+
+              interno = mapa[sensor]["interno"]
+
+              inicio_sensor = time.perf_counter()
+
+              campos = {
+
+                  "javax.faces.partial.ajax":
+                      "true",
+
+                  "javax.faces.source":
+                      "formPrecipitaciones:"
+                      "tabViewPrecipitaciones:"
+                      "cmdSearch",
+
+                  "javax.faces.partial.execute":
+                      "@all",
+
+                  "javax.faces.partial.render":
+                      "formPrecipitaciones:messages "
+                      "formPrecipitaciones:"
+                      "tabViewPrecipitaciones:"
+                      "dtCargasPrecipitaciones",
+
                   "formPrecipitaciones:"
                   "tabViewPrecipitaciones:"
-                  "cmdSearch",
+                  "cmdSearch":
+                      "formPrecipitaciones:"
+                      "tabViewPrecipitaciones:"
+                      "cmdSearch",
 
-              "javax.faces.partial.execute":
-                  "@all",
+                  "formPrecipitaciones":
+                      "formPrecipitaciones",
 
-              "javax.faces.partial.render":
-                  "formPrecipitaciones:messages "
                   "formPrecipitaciones:"
                   "tabViewPrecipitaciones:"
-                  "dtCargasPrecipitaciones",
+                  "fechaDesde_input":
+                      fecha_desde,
 
-              "formPrecipitaciones:"
-              "tabViewPrecipitaciones:"
-              "cmdSearch":
                   "formPrecipitaciones:"
                   "tabViewPrecipitaciones:"
-                  "cmdSearch",
+                  "fechaHasta_input":
+                      "",
 
-              "formPrecipitaciones":
-                  "formPrecipitaciones",
+                  "formPrecipitaciones:"
+                  "tabViewPrecipitaciones:"
+                  "selEstaciones_input":
+                      interno,
 
-              "formPrecipitaciones:"
-              "tabViewPrecipitaciones:"
-              "fechaDesde_input":
-                  fecha_desde,
+                  "formPrecipitaciones:"
+                  "tabViewPrecipitaciones:"
+                  "tipoValor_input":
+                      "",
 
-              "formPrecipitaciones:"
-              "tabViewPrecipitaciones:"
-              "fechaHasta_input":
-                  "",
+                  "formPrecipitaciones:"
+                  "tabViewPrecipitaciones:"
+                  "enMantenimiento_input":
+                      "",
 
-              # Sensor oficial 1901.
-              # En JSF INA aparece con identificador interno 130.
-              "formPrecipitaciones:"
-              "tabViewPrecipitaciones:"
-              "selEstaciones_input":
-                  "130",
+                  "formPrecipitaciones:"
+                  "tabViewPrecipitaciones:"
+                  "dtCargasPrecipitaciones_rppDD":
+                      "25",
 
-              "formPrecipitaciones:"
-              "tabViewPrecipitaciones:"
-              "tipoValor_input":
-                  "",
+                  "formPrecipitaciones:"
+                  "tabViewPrecipitaciones_activeIndex":
+                      "0",
 
-              "formPrecipitaciones:"
-              "tabViewPrecipitaciones:"
-              "enMantenimiento_input":
-                  "",
-
-              "formPrecipitaciones:"
-              "tabViewPrecipitaciones:"
-              "dtCargasPrecipitaciones_rppDD":
-                  "25",
-
-              "formPrecipitaciones:"
-              "tabViewPrecipitaciones_activeIndex":
-                  "0",
-
-              "javax.faces.ViewState":
-                  view_datos
-          }
-
-          post_data = urllib.parse.urlencode(
-              campos
-          ).encode("utf-8")
-
-          req_datos = urllib.request.Request(
-              DATOS,
-              data=post_data,
-              method="POST",
-              headers={
-                  "Content-Type":
-                      "application/x-www-form-urlencoded; charset=UTF-8",
-
-                  "Faces-Request":
-                      "partial/ajax",
-
-                  "X-Requested-With":
-                      "XMLHttpRequest",
-
-                  "Referer":
-                      DATOS
+                  "javax.faces.ViewState":
+                      viewstate
               }
+
+              post_data = urllib.parse.urlencode(
+                  campos
+              ).encode("utf-8")
+
+              req = urllib.request.Request(
+                  DATOS,
+                  data=post_data,
+                  method="POST",
+                  headers={
+                      "Content-Type":
+                          "application/x-www-form-urlencoded; charset=UTF-8",
+
+                      "Faces-Request":
+                          "partial/ajax",
+
+                      "X-Requested-With":
+                          "XMLHttpRequest",
+
+                      "Referer":
+                          DATOS
+                  }
+              )
+
+
+              try:
+
+                  with opener.open(
+                      req,
+                      timeout=30
+                  ) as r:
+                      respuesta = r.read().decode(
+                          "utf-8",
+                          errors="replace"
+                      )
+
+                  viewstate = extraer_viewstate_ajax(
+                      respuesta,
+                      viewstate
+                  )
+
+                  filas = extraer_filas(
+                      respuesta,
+                      sensor
+                  )
+
+                  segundos = (
+                      time.perf_counter()
+                      - inicio_sensor
+                  )
+
+                  if filas:
+
+                      con_datos.append(sensor)
+
+                      print(
+                          "SENSOR=" +
+                          sensor +
+                          " | ESTADO=OK" +
+                          " | FILAS=" +
+                          str(len(filas)) +
+                          " | SEGUNDOS=" +
+                          format(segundos, ".3f")
+                      )
+
+                      print(
+                          "ULTIMA_MEDICION=" +
+                          filas[0]
+                      )
+
+                  else:
+
+                      sin_datos.append(sensor)
+
+                      print(
+                          "SENSOR=" +
+                          sensor +
+                          " | ESTADO=SIN_FILAS_24H" +
+                          " | SEGUNDOS=" +
+                          format(segundos, ".3f")
+                      )
+
+
+              except Exception as e:
+
+                  errores.append(sensor)
+
+                  print(
+                      "SENSOR=" +
+                      sensor +
+                      " | ESTADO=ERROR" +
+                      " | DETALLE=" +
+                      str(e)
+                  )
+
+
+              # Pequeña pausa deliberada para no sobrecargar INA.
+              time.sleep(0.20)
+
+
+          total_segundos = (
+              time.perf_counter()
+              - inicio_total
           )
-
-          with opener.open(
-              req_datos,
-              timeout=30
-          ) as r:
-              respuesta = r.read().decode(
-                  "utf-8",
-                  errors="replace"
-              )
-
-          print("CONSULTA_HTTP=OK")
-          print(
-              "RESPUESTA_BYTES=" +
-              str(len(respuesta))
-          )
-
-
-          print("PASO 5 - EXTRAER FILAS 1901")
-
-          filas_encontradas = []
-
-          try:
-              root = ET.fromstring(respuesta)
-
-              bloques = []
-
-              for elem in root.iter():
-                  if elem.tag.endswith("update"):
-                      if elem.text:
-                          bloques.append(elem.text)
-
-              contenido = "\n".join(bloques)
-
-          except Exception:
-              contenido = respuesta
-
-
-          filas = re.findall(
-              r"<tr\b.*?</tr>",
-              contenido,
-              flags=re.I | re.S
-          )
-
-          for fila in filas:
-
-              limpio = re.sub(
-                  r"<[^>]+>",
-                  "|",
-                  fila
-              )
-
-              limpio = html.unescape(limpio)
-
-              limpio = re.sub(
-                  r"\|+",
-                  "|",
-                  limpio
-              )
-
-              limpio = re.sub(
-                  r"\s+",
-                  " ",
-                  limpio
-              ).strip(" |")
-
-              if "1901" in limpio:
-                  filas_encontradas.append(limpio)
-
-
-          print(
-              "FILAS_1901=" +
-              str(len(filas_encontradas))
-          )
-
-          for i, fila in enumerate(
-              filas_encontradas[:5],
-              start=1
-          ):
-              print(
-                  "FILA_" +
-                  str(i) +
-                  "=" +
-                  fila
-              )
-
-
-          if not filas_encontradas:
-              raise RuntimeError(
-                  "La consulta HTTP funciono, "
-                  "pero no se pudieron extraer filas del sensor 1901."
-              )
 
 
           print(
@@ -348,14 +565,73 @@ jobs:
           )
 
           print(
+              "SENSORES_SOLICITADOS=" +
+              str(len(SENSORES))
+          )
+
+          print(
+              "SENSORES_MAPEADOS=" +
+              str(len(encontrados))
+          )
+
+          print(
+              "SENSORES_CON_DATOS=" +
+              str(len(con_datos))
+          )
+
+          print(
+              "SENSORES_SIN_DATOS_24H=" +
+              str(len(sin_datos))
+          )
+
+          print(
+              "SENSORES_MAPEO_FALTANTE=" +
+              str(len(faltantes))
+          )
+
+          print(
+              "SENSORES_CON_ERROR_HTTP=" +
+              str(len(errores))
+          )
+
+          print(
+              "TIEMPO_TOTAL_SEGUNDOS=" +
+              format(total_segundos, ".3f")
+          )
+
+          print(
+              "CON_DATOS=" +
+              ",".join(con_datos)
+          )
+
+          print(
+              "SIN_DATOS=" +
+              ",".join(sin_datos)
+          )
+
+          print(
+              "MAPEO_FALTANTE=" +
+              ",".join(faltantes)
+          )
+
+          print(
+              "ERRORES_HTTP=" +
+              ",".join(errores)
+          )
+
+
+          if errores:
+              raise RuntimeError(
+                  "Hubo errores HTTP en uno o mas sensores."
+              )
+
+
+          print(
               "RESULTADO FINAL=OK"
           )
 
           print(
-              "INA CIRSA CONSULTABLE POR HTTP DIRECTO"
+              "INA CIRSA HTTP MULTISENSOR=OK"
           )
 
-          print(
-              "SENSOR 1901=OK"
-          )
           PY
